@@ -262,6 +262,7 @@ set(COMMON_SOURCES
     V3DfgSynthesize.cpp
     V3DiagSarif.cpp
     V3DupFinder.cpp
+    V3EmitCFaultApi.cpp
     V3EmitCBase.cpp
     V3EmitCConstPool.cpp
     V3EmitCFunc.cpp

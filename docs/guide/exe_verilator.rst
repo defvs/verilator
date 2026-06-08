@@ -613,6 +613,20 @@ Summary:
    expression in 32-bit words to expand into separate word-based
    statements.
 
+.. option:: --fault-api
+
+   Experimental. Generate a C++ fault-injection API and
+   :file:`fault_targets.json` manifest alongside the model. The generated
+   API resolves stable target IDs during setup and flips packed RTL signal
+   bits by directly mutating generated model storage. This option requires
+   :vlopt:`--fault-root`.
+
+.. option:: --fault-root <hierarchy>
+
+   With :vlopt:`--fault-api`, specify the hierarchical RTL instance below
+   which targets are injectable, for example ``testbench.u_dut``. Signals
+   outside this subtree and module ports are excluded from the manifest.
+
 .. option:: -F <file>
 
    Read the specified file, and act as if all text inside it was specified

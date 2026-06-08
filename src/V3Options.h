@@ -253,6 +253,7 @@ private:
     bool m_dpiHdrOnly = false;      // main switch: --dpi-hdr-only
     bool m_emitAccessors = false;   // main switch: --emit-accessors
     bool m_exe = false;             // main switch: --exe
+    bool m_faultApi = false;        // main switch: --fault-api
     bool m_flatten = false;         // main switch: --flatten
     bool m_fourstate = false;       // main switch: --fourstate
     bool m_hierarchical = false;    // main switch: --hierarchical
@@ -367,6 +368,7 @@ private:
     string      m_buildDepBin;  // main switch: --build-dep-bin {filename}
     string      m_diagnosticsSarifOutput;  // main switch: --diagnostics-sarif-output
     string      m_exeName;      // main switch: -o {name}
+    string      m_faultRoot;    // main switch: --fault-root
     VFileLibList m_hierParamsFile; // main switch: --hierarchical-params-file
     string      m_jsonOnlyOutput;    // main switch: --json-only-output
     string      m_jsonOnlyMetaOutput;    // main switch: --json-only-meta-output
@@ -556,6 +558,8 @@ public:
     }
     bool emitAccessors() const { return m_emitAccessors; }
     bool exe() const { return m_exe; }
+    bool faultApi() const { return m_faultApi; }
+    const string& faultRoot() const { return m_faultRoot; }
     bool flatten() const { return m_flatten; }
     bool fourstate() const { return m_fourstate; }
     bool gmake() const { return m_gmake; }

@@ -457,6 +457,8 @@ detailed descriptions of these arguments.
     --error-limit <value>       Abort after this number of errors
     --exe                       Link to create executable
     --expand-limit <value>      Set expand optimization limit
+    --fault-api                 Generate experimental fault-injection API
+    --fault-root <hierarchy>    Set injectable RTL hierarchy root
      -F <file>                  Parse arguments from a file, relatively
      -f <file>                  Parse arguments from a file
      -FI <file>                 Force include of a file

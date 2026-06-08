@@ -978,6 +978,15 @@ void V3Options::notify() VL_MT_DISABLED {
     if (m_exe && !v3Global.opt.libCreate().empty()) {
         cmdfl->v3error("--exe cannot be used together with --lib-create. Suggest see manual");
     }
+    if (faultApi() && faultRoot().empty()) {
+        cmdfl->v3error("--fault-api requires --fault-root <hierarchical-name>");
+    }
+    if (!faultApi() && !faultRoot().empty()) {
+        cmdfl->v3error("--fault-root requires --fault-api");
+    }
+    if (faultApi() && protectIds()) {
+        cmdfl->v3error("--fault-api cannot be used with --protect-ids");
+    }
 
     // Make sure at least one make system is enabled
     if (!m_gmake && !m_makeJson) m_gmake = true;
@@ -1429,6 +1438,13 @@ void V3Options::parseOptsList(FileLine* fl, const string& optdir, int argc,
     DECL_OPTION("-exe", OnOff, &m_exe);
     DECL_OPTION("-expand-limit", CbVal,
                 [this](const char* valp) { m_expandLimit = std::atoi(valp); });
+    DECL_OPTION("-fault-api", CbOnOff, [this](bool flag) {
+        m_faultApi = flag;
+        // Preserve writable generated storage. The dedicated emitter filters
+        // targets and adds no checks to the simulation hot path.
+        if (flag) m_publicFlatRW = true;
+    });
+    DECL_OPTION("-fault-root", Set, &m_faultRoot);
 
     DECL_OPTION("-F", CbVal, [this, fl, &optdir](const char* valp) VL_MT_DISABLED {
         parseOptsFile(fl, parseFileArg(optdir, valp), true);
