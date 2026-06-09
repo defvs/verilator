@@ -20,6 +20,7 @@
 #include "V3EmitCBase.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <vector>
 
 VL_DEFINE_DEBUG_FUNCTIONS;
@@ -31,6 +32,7 @@ struct FaultTarget final {
     std::string m_name;
     std::string m_source;
     int m_width;
+    std::vector<uint32_t> m_indices;
 };
 
 class EmitCFaultApi final : public EmitCBaseVisitorConst {
@@ -45,6 +47,44 @@ class EmitCFaultApi final : public EmitCBaseVisitorConst {
         return text.size() >= prefix.size() && text.compare(0, prefix.size(), prefix) == 0;
     }
 
+    static const AstNodeDType*
+    leafDTypep(const AstNodeDType* dtypep, std::vector<const AstUnpackArrayDType*>& unpacked) {
+        while (dtypep) {
+            dtypep = dtypep->skipRefp();
+            if (const AstUnpackArrayDType* const unpackp = VN_CAST(dtypep, UnpackArrayDType)) {
+                unpacked.push_back(unpackp);
+                dtypep = unpackp->subDTypep();
+            } else {
+                return dtypep;
+            }
+        }
+        return nullptr;
+    }
+
+    static bool isInjectableLeaf(const AstNodeDType* leafp) {
+        const AstBasicDType* const basicp = leafp ? leafp->basicp() : nullptr;
+        return basicp && basicp->isBitLogic() && !leafp->isCompound();
+    }
+
+    void collectUnpackedTargets(const AstVar* varp,
+                                const std::vector<const AstUnpackArrayDType*>& unpacked,
+                                size_t dim, std::vector<uint32_t>& indices,
+                                std::string name) {
+        if (dim == unpacked.size()) {
+            m_targets.push_back({varp, name, varp->fileline()->filename(), varp->width(), indices});
+            return;
+        }
+
+        const AstUnpackArrayDType* const unpackp = unpacked[dim];
+        for (int offset = 0; offset < unpackp->elementsConst(); ++offset) {
+            const int sourceIndex = unpackp->lo() + offset;
+            indices.push_back(static_cast<uint32_t>(offset));
+            collectUnpackedTargets(varp, unpacked, dim + 1, indices,
+                                   name + "[" + cvtToStr(sourceIndex) + "]");
+            indices.pop_back();
+        }
+    }
+
     void collectTargets() {
         const std::string prefix = v3Global.opt.faultRoot() + ".";
         for (const AstNode* nodep = m_topModulep->stmtsp(); nodep; nodep = nodep->nextp()) {
@@ -53,15 +93,20 @@ class EmitCFaultApi final : public EmitCBaseVisitorConst {
                 || varp->declDirection().isAny() || varp->isConst()) {
                 continue;
             }
-            const AstNodeDType* const dtypep = varp->dtypep()->skipRefp();
-            if (!varp->basicp() || !varp->isBitLogic() || dtypep->isCompound()
-                || VN_IS(dtypep, UnpackArrayDType)) {
+            std::vector<const AstUnpackArrayDType*> unpacked;
+            const AstNodeDType* const leafp = leafDTypep(varp->dtypep(), unpacked);
+            if (!isInjectableLeaf(leafp)) {
                 continue;
             }
 
             const std::string name = AstNode::prettyName(varp->name());
             if (!startsWith(name, prefix)) continue;
-            m_targets.push_back({varp, name, varp->fileline()->filename(), varp->width()});
+            if (unpacked.empty()) {
+                m_targets.push_back({varp, name, varp->fileline()->filename(), varp->width(), {}});
+            } else {
+                std::vector<uint32_t> indices;
+                collectUnpackedTargets(varp, unpacked, 0, indices, name);
+            }
         }
         std::stable_sort(m_targets.begin(), m_targets.end(),
                          [](const FaultTarget& lhs, const FaultTarget& rhs) {
@@ -69,7 +114,7 @@ class EmitCFaultApi final : public EmitCBaseVisitorConst {
                          });
         if (m_targets.empty()) {
             v3error("--fault-root '" + v3Global.opt.faultRoot()
-                    + "' did not match any injectable packed RTL signals");
+                    + "' did not match any injectable packed or unpacked RTL signals");
         }
     }
 
@@ -138,7 +183,8 @@ class EmitCFaultApi final : public EmitCBaseVisitorConst {
         puts("    switch (id) {\n");
         for (size_t id = 0; id < m_targets.size(); ++id) {
             const FaultTarget& target = m_targets[id];
-            const std::string member = "m_modelp->rootp->" + target.m_varp->nameProtect();
+            std::string member = "m_modelp->rootp->" + target.m_varp->nameProtect();
+            for (const uint32_t index : target.m_indices) member += "[" + cvtToStr(index) + "U]";
             puts("    case " + cvtToStr(id) + "U:\n");
             puts("        if (bit >= " + cvtToStr(target.m_width) + "U) return false;\n");
             if (target.m_width <= 32) {
