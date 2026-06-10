@@ -627,6 +627,14 @@ Summary:
    which targets are injectable, for example ``testbench.u_dut``. Signals
    outside this subtree and module ports are excluded from the manifest.
 
+.. option:: --probe-config <filename>
+
+   Experimental. Generate a C++ probe/golden comparison API and
+   :file:`probe_points.json` manifest alongside the model. The configuration
+   file is line-oriented with ``name hierarchy mode limit`` entries. Probes
+   directly read generated model storage, capture golden value changes, and
+   compare later runs against that golden stream.
+
 .. option:: -F <file>
 
    Read the specified file, and act as if all text inside it was specified

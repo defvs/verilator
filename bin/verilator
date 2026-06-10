@@ -534,6 +534,7 @@ detailed descriptions of these arguments.
     --no-pins64                 Don't use uint64_t's for 33-64 bit sigs
     --pipe-filter <command>     Filter all input through a script
     --prefix <topname>          Name of top-level class
+    --probe-config <filename>   Generate static probe/golden comparison API
     --preproc-comments          Include preprocessor comments in the output with -E
     --preproc-defines           Include preprocessor defines in the output with -E
     --preproc-resolve           Include all found modules in the output with -E

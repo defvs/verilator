@@ -378,6 +378,7 @@ private:
     string      m_makeDir;      // main switch: -Mdir
     string      m_modPrefix;    // main switch: --mod-prefix
     string      m_pipeFilter;   // main switch: --pipe-filter
+    string      m_probeConfig;  // main switch: --probe-config
     string      m_prefix;       // main switch: --prefix
     string      m_protectKey;   // main switch: --protect-key
     string      m_topModule;    // main switch: --top-module
@@ -560,6 +561,7 @@ public:
     bool exe() const { return m_exe; }
     bool faultApi() const { return m_faultApi; }
     const string& faultRoot() const { return m_faultRoot; }
+    bool probeApi() const { return !m_probeConfig.empty(); }
     bool flatten() const { return m_flatten; }
     bool fourstate() const { return m_fourstate; }
     bool gmake() const { return m_gmake; }
@@ -691,6 +693,7 @@ public:
     string makeDir() const VL_MT_SAFE { return m_makeDir; }
     string modPrefix() const VL_MT_SAFE { return m_modPrefix; }
     string pipeFilter() const { return m_pipeFilter; }
+    const string& probeConfig() const { return m_probeConfig; }
     string prefix() const VL_MT_SAFE { return m_prefix; }
     // Not just called protectKey() to avoid bugs of not using protectKeyDefaulted()
     bool protectKeyProvided() const { return !m_protectKey.empty(); }

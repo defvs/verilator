@@ -224,6 +224,7 @@ static void process() {
         V3WidthCommit::widthCommit(v3Global.rootp());
         v3Global.assertDTypesResolved(true);
         v3Global.widthMinUsage(VWidthMinUsage::MATCHES_WIDTH);
+        if (v3Global.opt.probeApi()) V3EmitC::prepareProbeApi();
 
         // End of elaboration
         V3Stats::addStatPerf(V3Stats::STAT_WALLTIME_ELAB, elabWallTime.deltaTime());
@@ -640,6 +641,7 @@ static void process() {
             V3EmitC::emitcConstPool();
             V3EmitC::emitcModel();
             if (v3Global.opt.faultApi()) V3EmitC::emitcFaultApi();
+            if (v3Global.opt.probeApi()) V3EmitC::emitcProbeApi();
             V3EmitC::emitcPch();
             V3EmitC::emitcHeaders();
         } else if (v3Global.opt.dpiHdrOnly()) {

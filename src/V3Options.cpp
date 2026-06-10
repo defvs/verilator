@@ -987,6 +987,9 @@ void V3Options::notify() VL_MT_DISABLED {
     if (faultApi() && protectIds()) {
         cmdfl->v3error("--fault-api cannot be used with --protect-ids");
     }
+    if (probeApi() && protectIds()) {
+        cmdfl->v3error("--probe-config cannot be used with --protect-ids");
+    }
 
     // Make sure at least one make system is enabled
     if (!m_gmake && !m_makeJson) m_gmake = true;
@@ -1670,6 +1673,7 @@ void V3Options::parseOptsList(FileLine* fl, const string& optdir, int argc,
     });
     DECL_OPTION("-pins-uint8", OnOff, &m_pinsUint8);
     DECL_OPTION("-pipe-filter", Set, &m_pipeFilter);
+    DECL_OPTION("-probe-config", Set, &m_probeConfig);
     DECL_OPTION("-pp-comments", OnOff, &m_preprocComments).undocumented();  // Renamed
     DECL_OPTION("-prefix", CbVal, [this, fl](const char* valp) {
         validateIdentifier(fl, valp, "--prefix");
