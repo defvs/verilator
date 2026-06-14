@@ -629,11 +629,12 @@ Summary:
 
 .. option:: --probe-config <filename>
 
-   Experimental. Generate a C++ probe/golden comparison API and
-   :file:`probe_points.json` manifest alongside the model. The configuration
-   file is line-oriented with ``name hierarchy mode limit`` entries. Probes
-   directly read generated model storage, capture golden value changes, and
-   compare later runs against that golden stream.
+   Experimental. Generate a C++ probe/checker API and
+   :file:`probe_points.json` manifest alongside the model. The command-oriented
+   configuration accepts ``create_probe``, ``create_checker``, and
+   ``create_assessment`` entries. Functional probes compare generated model
+   storage with a golden stream; checkers record false-to-true detection events.
+   See the VFI probe configuration documentation for the complete format.
 
 .. option:: -F <file>
 

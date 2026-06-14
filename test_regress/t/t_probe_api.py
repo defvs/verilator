@@ -13,11 +13,14 @@ test.scenarios('simulator')
 
 probe_config = test.obj_dir + "/probe_config.txt"
 with open(probe_config, "w", encoding="utf-8") as fh:
-    fh.write("scalar t.u_dut.scalar all 4\n")
-    fh.write("bus t.u_dut.data_bus all 4\n")
-    fh.write("bit3 t.u_dut.data_bus[3] first 1\n")
-    fh.write("elem t.u_dut.reg_bank[2] stop 1\n")
-    fh.write("wide t.u_dut.wide_bus all 4\n")
+    fh.write('create_probe "scalar" --path t.u_dut.scalar --mode all --log-limit 4\n')
+    fh.write('create_probe "bus" --path t.u_dut.data_bus --mode all --log-limit 4\n')
+    fh.write('create_probe "bit3" --path t.u_dut.data_bus[3]\n')
+    fh.write('create_probe "elem" --path t.u_dut.reg_bank[2]\n')
+    fh.write('create_probe "wide" --path t.u_dut.wide_bus --mode all --log-limit 4\n')
+    fh.write('create_checker "error" --path t.u_dut.error_flag\n')
+    fh.write('create_assessment "integrity" --probe elem --checker error '
+             '--max-delay 10ns\n')
 
 test.compile(make_top_shell=False, make_main=False,
              verilator_flags2=["--exe", "--probe-config", probe_config, test.pli_filename])

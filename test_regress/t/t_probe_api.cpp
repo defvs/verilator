@@ -33,6 +33,7 @@ void setInitial(Vt_probe_api___024root* rootp) {
     rootp->t__DOT__u_dut__DOT__wide_bus[0] = 0x89abcdefU;
     rootp->t__DOT__u_dut__DOT__wide_bus[1] = 0x01234567U;
     rootp->t__DOT__u_dut__DOT__wide_bus[2] = 0xfedcba98U;
+    rootp->t__DOT__u_dut__DOT__error_flag = 0;
 }
 
 void setChanged(Vt_probe_api___024root* rootp) {
@@ -51,8 +52,8 @@ int main(int argc, char** argv) {
     contextp->commandArgs(argc, argv);
     const std::unique_ptr<Vt_probe_api> topp{new Vt_probe_api{contextp.get()}};
 
-    const auto& probeMeta = Vt_probe_apiProbeApi::probes();
-    if (probeMeta.size() != 5) return 1;
+    const auto& probeMeta = Vt_probe_apiProbeApi::signals();
+    if (probeMeta.size() != 6) return 1;
     if (std::string{probeMeta[0].name} != "scalar") return 2;
     if (std::string{probeMeta[1].name} != "bus") return 3;
     if (std::string{probeMeta[2].name} != "bit3") return 4;
@@ -60,6 +61,7 @@ int main(int argc, char** argv) {
     if (std::string{probeMeta[4].name} != "wide") return 6;
     if (probeMeta[2].width != 1) return 7;
     if (probeMeta[4].width != 96) return 8;
+    if (std::string{probeMeta[5].kind} != "checker") return 24;
 
     const std::string path = goldenPath(argc, argv);
     Vt_probe_apiProbeApi capture{topp.get()};
@@ -72,26 +74,29 @@ int main(int argc, char** argv) {
     Vt_probe_apiProbeApi compare{topp.get()};
     if (!compare.loadGolden(path)) return 12;
     setInitial(topp->rootp);
-    if (compare.check(0) != Vt_probe_apiProbeApi::CheckResult::Continue) return 13;
+    if (!compare.sample(0)) return 13;
     setChanged(topp->rootp);
-    if (compare.check(10) != Vt_probe_apiProbeApi::CheckResult::Continue) return 14;
-    if (compare.finalCheck(10) != Vt_probe_apiProbeApi::CheckResult::Continue) return 15;
-    if (compare.deviations() != 0) return 16;
+    if (!compare.sample(10)) return 14;
+    if (!compare.finalCheck(10)) return 15;
 
     Vt_probe_apiProbeApi mismatch{topp.get()};
     if (!mismatch.loadGolden(path)) return 17;
     setInitial(topp->rootp);
-    if (mismatch.check(0) != Vt_probe_apiProbeApi::CheckResult::Continue) return 18;
+    if (!mismatch.sample(0)) return 18;
+    if (!mismatch.beginInjection(0)) return 25;
     setChanged(topp->rootp);
     topp->rootp->t__DOT__u_dut__DOT__reg_bank[2] ^= 1U;
-    if (mismatch.check(10) != Vt_probe_apiProbeApi::CheckResult::Stop) return 19;
-    if (mismatch.deviations() == 0) return 20;
+    topp->rootp->t__DOT__u_dut__DOT__error_flag = 1;
+    if (!mismatch.sample(10)) return 19;
+    if (!mismatch.finalCheck(10)) return 20;
+    if (!mismatch.writeResults(path + ".results", 10)) return 26;
 
     Vt_probe_apiProbeApi unread{topp.get()};
     if (!unread.loadGolden(path)) return 21;
     setInitial(topp->rootp);
-    if (unread.check(0) != Vt_probe_apiProbeApi::CheckResult::Continue) return 22;
-    if (unread.finalCheck(0) != Vt_probe_apiProbeApi::CheckResult::Stop) return 23;
+    if (!unread.sample(0)) return 22;
+    if (!unread.beginInjection(0)) return 27;
+    if (!unread.finalCheck(0)) return 23;
 
     std::printf("*-* All Finished *-*\n");
     return 0;

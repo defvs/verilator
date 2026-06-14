@@ -9,6 +9,7 @@ module dut;
    logic [7:0]  data_bus;
    logic [95:0] wide_bus;
    logic [7:0]  reg_bank [0:3];
+   logic        error_flag;
    logic [3:0]  unprobed;
 endmodule
 
