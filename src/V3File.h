@@ -349,6 +349,7 @@ public:
         UASSERT(!m_scope.empty(), "end() without begin()");
         puts("\n" + m_prefix + m_scope.top());
         m_scope.pop();
+        m_empty = false;
         return *this;
     }
 
