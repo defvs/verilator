@@ -60,9 +60,11 @@ int main(int argc, char** argv) {
 
     const auto array_id = faults.lookup("t.u_dut.bank[1]");
     if (array_id == Vt_fault_apiFaultApi::invalidTarget) return 22;
+    topp->bank_index = 1;
     if (!faults.force(array_id, 2, true)) return 23;
     topp->eval();
     if (topp->bank_observed != 4) return 24;
+    if (topp->bank_dynamic_observed != 4) return 26;
     if (!faults.release(array_id, 2)) return 25;
 
     std::printf("*-* All Finished *-*\n");

@@ -549,12 +549,28 @@ public:
 
     static AstNodeExpr* buildFlattenIndexExpr(FileLine* flp, const ArraySelInfo& info) {
         const std::vector<int> dimSizes = arraySelDimSizes(info);
-        std::vector<int> constIndices;
-        constIndices.reserve(info.m_sels.size());
-        for (AstArraySel* const selp : info.m_sels) {
-            constIndices.push_back(VN_AS(selp->bitp(), Const)->toSInt());
+        AstNodeExpr* indexp = nullptr;
+        int constOffset = 0;
+        int stride = 1;
+        for (int i = static_cast<int>(info.m_sels.size()) - 1; i >= 0; --i) {
+            AstNodeExpr* const bitp = info.m_sels[i]->bitp();
+            if (const AstConst* const constp = VN_CAST(bitp, Const)) {
+                constOffset += constp->toSInt() * stride;
+            } else {
+                AstNodeExpr* termp = bitp->cloneTreePure(false);
+                termp->foreach([](AstVarRef* const refp) { markNonReplaceable(refp); });
+                if (stride != 1) {
+                    termp = new AstMul{flp, termp, makeConst32(flp, stride)};
+                }
+                indexp = indexp ? new AstAdd{flp, indexp, termp} : termp;
+            }
+            stride *= dimSizes[i];
         }
-        return makeConst32(flp, flattenIndex(constIndices, dimSizes));
+        if (constOffset || !indexp) {
+            AstNodeExpr* const offsetp = makeConst32(flp, constOffset);
+            indexp = indexp ? new AstAdd{flp, indexp, offsetp} : offsetp;
+        }
+        return indexp;
     }
 
     static AstNodeExpr* buildRhsDataExpr(FileLine* flp, const ForceInfo& finfo) {
