@@ -21,6 +21,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -48,6 +50,23 @@ static std::string declarationKey(const AstVar* varp) {
     return flp->filename() + ":" + cvtToStr(flp->lineno()) + ":"
            + cvtToStr(flp->firstColumn()) + ":" + AstNode::prettyName(varp->origName());
 }
+
+struct AccountingSite final {
+    std::string m_path;
+    std::string m_declarationKey;
+    std::string m_source;
+    std::string m_objectKind;
+    std::string m_earlyDisposition;
+    std::string m_earlyReason;
+    int m_line = 0;
+    int m_column = 0;
+    int m_width = 0;
+    std::vector<std::pair<int, int>> m_dimensions;
+    SiteKind m_siteKind = SiteKind::UNKNOWN;
+    std::string m_uncertainReason;
+};
+
+std::vector<AccountingSite> s_accountingSites;
 
 static const char* siteKindName(SiteKind kind) {
     switch (kind) {
@@ -103,6 +122,16 @@ leafDTypep(const AstNodeDType* dtypep, std::vector<const AstUnpackArrayDType*>& 
 static bool isInjectableLeaf(const AstNodeDType* leafp) {
     const AstBasicDType* const basicp = leafp ? leafp->basicp() : nullptr;
     return basicp && basicp->isBitLogic() && !leafp->isCompound();
+}
+
+static std::vector<std::string> supportedModels(SiteKind kind) {
+    std::vector<std::string> models;
+    if (kind == SiteKind::SEQUENTIAL || kind == SiteKind::LATCH) models.push_back("seu");
+    if (kind != SiteKind::UNKNOWN) {
+        models.push_back("stuck_at_0");
+        models.push_back("stuck_at_1");
+    }
+    return models;
 }
 
 static bool isFaultTarget(const AstVar* varp) {
@@ -417,20 +446,230 @@ class EmitCFaultApi final : public EmitCBaseVisitorConst {
                 of.end();
             }
             of.end();
-            std::vector<std::string> supportedModels;
-            if (target.m_siteKind == SiteKind::SEQUENTIAL
-                || target.m_siteKind == SiteKind::LATCH) {
-                supportedModels.push_back("seu");
-            }
-            if (target.m_siteKind != SiteKind::UNKNOWN) {
-                supportedModels.push_back("stuck_at_0");
-                supportedModels.push_back("stuck_at_1");
-            }
+            const std::vector<std::string> models = supportedModels(target.m_siteKind);
             of.begin("supported_fault_models", '[');
-            for (const std::string& model : supportedModels) of.put(model);
+            for (const std::string& model : models) of.put(model);
             of.end();
             if (!target.m_uncertainReason.empty()) {
                 of.put("uncertain_reason", target.m_uncertainReason);
+            }
+            of.end();
+        }
+        of.end();
+    }
+
+    struct AccountingResult final {
+        AccountingSite m_site;
+        std::string m_disposition;
+        std::string m_reason;
+        int m_targetId = -1;
+    };
+
+    static void increment(std::map<std::string, std::pair<int, int>>& totals,
+                          const std::string& key, int bits) {
+        auto& total = totals[key];
+        ++total.first;
+        total.second += bits;
+    }
+
+    static const char* accountingSiteKindName(const AccountingSite& site) {
+        if (!site.m_dimensions.empty()
+            && (site.m_siteKind == SiteKind::SEQUENTIAL
+                || site.m_siteKind == SiteKind::LATCH)) {
+            return "memory_element";
+        }
+        return siteKindName(site.m_siteKind);
+    }
+
+    static void emitTotals(V3OutJsonFile& of, const std::string& name,
+                           const std::string& keyName,
+                           const std::map<std::string, std::pair<int, int>>& totals) {
+        of.begin(name, '[');
+        for (const auto& entry : totals) {
+            of.begin();
+            of.put(keyName, entry.first);
+            of.put("objects", entry.second.first);
+            of.put("bits", entry.second.second);
+            of.end();
+        }
+        of.end();
+    }
+
+    void emitAccounting() const {
+        std::unordered_map<std::string, size_t> targetByPath;
+        std::unordered_set<std::string> generatedDeclarationKeys;
+        for (size_t id = 0; id < m_targets.size(); ++id) {
+            targetByPath.emplace(m_targets[id].m_name, id);
+            generatedDeclarationKeys.insert(declarationKey(m_targets[id].m_varp));
+        }
+
+        std::vector<AccountingResult> results;
+        std::unordered_set<size_t> correlatedTargets;
+        results.reserve(s_accountingSites.size() + m_targets.size());
+        for (const AccountingSite& site : s_accountingSites) {
+            AccountingResult result{site, "", "", -1};
+            const auto targetIt = targetByPath.find(site.m_path);
+            if (!site.m_earlyDisposition.empty()) {
+                result.m_disposition = site.m_earlyDisposition;
+                result.m_reason = site.m_earlyReason;
+            } else if (targetIt != targetByPath.end()) {
+                const FaultTarget& target = m_targets[targetIt->second];
+                result.m_targetId = static_cast<int>(targetIt->second);
+                correlatedTargets.insert(targetIt->second);
+                result.m_site.m_siteKind = target.m_siteKind;
+                result.m_site.m_uncertainReason = target.m_uncertainReason;
+                if (target.m_siteKind == SiteKind::UNKNOWN) {
+                    result.m_disposition = "ambiguous_semantics";
+                    result.m_reason = target.m_uncertainReason;
+                } else {
+                    result.m_disposition = "injectable";
+                    result.m_reason = "correlated with generated fault target";
+                }
+            } else if (generatedDeclarationKeys.count(site.m_declarationKey)) {
+                result.m_disposition = "aliased_or_collapsed";
+                result.m_reason
+                    = "the declaration survived under another generated target path";
+            } else {
+                result.m_disposition = "optimized_or_elided";
+                result.m_reason = "no generated target survived optimization for this object";
+            }
+            results.push_back(std::move(result));
+        }
+
+        // A generated target without a pre-optimization candidate must never disappear from
+        // the audit. Account it as unresolved so strict builds fail visibly.
+        for (size_t id = 0; id < m_targets.size(); ++id) {
+            if (correlatedTargets.count(id)) continue;
+            const FaultTarget& target = m_targets[id];
+            AccountingSite site;
+            site.m_path = target.m_name;
+            site.m_declarationKey = declarationKey(target.m_varp);
+            site.m_source = target.m_source;
+            site.m_objectKind
+                = target.m_indices.empty()
+                      ? (target.m_width == 1 ? "scalar" : "packed_vector")
+                      : "unpacked_array_element";
+            site.m_line = target.m_varp->fileline()->lineno();
+            site.m_column = target.m_varp->fileline()->firstColumn();
+            site.m_width = target.m_width;
+            site.m_dimensions = target.m_dimensions;
+            site.m_siteKind = target.m_siteKind;
+            site.m_uncertainReason = target.m_uncertainReason;
+            results.push_back({site, "internal_tool_failure/unresolved",
+                               "generated target was absent from the pre-optimization inventory",
+                               static_cast<int>(id)});
+        }
+
+        std::stable_sort(results.begin(), results.end(),
+                         [](const AccountingResult& lhs, const AccountingResult& rhs) {
+                             return lhs.m_site.m_path < rhs.m_site.m_path;
+                         });
+
+        int candidateObjects = 0;
+        int candidateBits = 0;
+        int injectableObjects = 0;
+        int injectableBits = 0;
+        int excludedObjects = 0;
+        int excludedBits = 0;
+        int unresolvedObjects = 0;
+        int unresolvedBits = 0;
+        std::map<std::string, std::pair<int, int>> byHierarchy;
+        std::map<std::string, std::pair<int, int>> bySiteKind;
+        std::map<std::string, std::pair<int, int>> byModel;
+        std::map<std::string, std::pair<int, int>> byExclusion;
+        std::map<std::string, std::pair<int, int>> byDisposition;
+        for (const AccountingResult& result : results) {
+            const AccountingSite& site = result.m_site;
+            ++candidateObjects;
+            candidateBits += site.m_width;
+            if (result.m_disposition == "injectable") {
+                ++injectableObjects;
+                injectableBits += site.m_width;
+            } else if (result.m_disposition == "internal_tool_failure/unresolved") {
+                ++unresolvedObjects;
+                unresolvedBits += site.m_width;
+            } else {
+                ++excludedObjects;
+                excludedBits += site.m_width;
+                increment(byExclusion, result.m_disposition, site.m_width);
+            }
+            const size_t separator = site.m_path.rfind('.');
+            increment(byHierarchy,
+                      separator == std::string::npos ? site.m_path
+                                                    : site.m_path.substr(0, separator),
+                      site.m_width);
+            const char* const kind = accountingSiteKindName(site);
+            increment(bySiteKind, kind, site.m_width);
+            const std::vector<std::string> models
+                = result.m_disposition == "injectable"
+                      ? supportedModels(site.m_siteKind)
+                      : std::vector<std::string>{};
+            if (models.empty()) {
+                increment(byModel, "none", site.m_width);
+            } else {
+                for (const std::string& model : models) increment(byModel, model, site.m_width);
+            }
+            increment(byDisposition, result.m_disposition, site.m_width);
+        }
+
+        V3OutJsonFile of{v3Global.opt.makeDir() + "/fault_site_accounting.json"};
+        of.put("schema_version", 1);
+        of.put("manifest_type", "vfi_fault_site_accounting");
+        of.put("top_module", AstNode::prettyName(v3Global.opt.topModule()));
+        of.put("fault_root", v3Global.opt.faultRoot());
+        of.put("accounting_complete", unresolvedBits == 0);
+        of.begin("summary");
+        of.put("candidate_objects", candidateObjects);
+        of.put("candidate_bits", candidateBits);
+        of.put("injectable_objects", injectableObjects);
+        of.put("injectable_bits", injectableBits);
+        of.put("excluded_objects", excludedObjects);
+        of.put("excluded_bits", excludedBits);
+        of.put("unresolved_objects", unresolvedObjects);
+        of.put("unresolved_bits", unresolvedBits);
+        of.put("invariant_holds",
+               candidateBits == injectableBits + excludedBits + unresolvedBits);
+        of.end();
+        emitTotals(of, "by_hierarchy", "hierarchy", byHierarchy);
+        emitTotals(of, "by_site_kind", "site_kind", bySiteKind);
+        emitTotals(of, "by_supported_fault_model", "fault_model", byModel);
+        emitTotals(of, "by_exclusion_reason", "reason", byExclusion);
+        emitTotals(of, "by_disposition", "disposition", byDisposition);
+        of.begin("sites", '[');
+        for (const AccountingResult& result : results) {
+            const AccountingSite& site = result.m_site;
+            of.begin();
+            of.put("path", site.m_path);
+            of.put("source", site.m_source);
+            of.put("declaration_line", site.m_line);
+            of.put("declaration_column", site.m_column);
+            of.put("width", site.m_width);
+            of.put("object_kind", site.m_objectKind);
+            of.put("site_kind", accountingSiteKindName(site));
+            of.put("disposition", result.m_disposition);
+            of.put("reason", result.m_reason);
+            if (result.m_targetId >= 0) of.put("generated_target_id", result.m_targetId);
+            of.begin("dimensions", '[');
+            for (const auto& dimension : site.m_dimensions) {
+                of.begin();
+                of.put("kind", "unpacked");
+                of.put("left", dimension.first);
+                of.put("right", dimension.second);
+                of.put("size",
+                       dimension.first >= dimension.second ? dimension.first - dimension.second + 1
+                                                           : dimension.second - dimension.first + 1);
+                of.end();
+            }
+            of.end();
+            const std::vector<std::string> models
+                = result.m_disposition == "injectable"
+                      ? supportedModels(site.m_siteKind)
+                      : std::vector<std::string>{};
+            of.begin("supported_fault_models", '[');
+            for (const std::string& model : models) of.put(model);
+            of.end();
+            if (!site.m_uncertainReason.empty()) {
+                of.put("uncertain_reason", site.m_uncertainReason);
             }
             of.end();
         }
@@ -445,6 +684,7 @@ public:
             emitHeader();
             emitSource();
             emitManifest();
+            emitAccounting();
         }
     }
 };
@@ -500,6 +740,7 @@ void V3EmitC::prepareFaultApi() {
     };
 
     s_siteSemantics.clear();
+    s_accountingSites.clear();
     SiteSemanticsVisitor semantics{v3Global.rootp()};
 
     class ModuleContentsVisitor final : public VNVisitorConst {
@@ -541,6 +782,7 @@ void V3EmitC::prepareFaultApi() {
 
     AstNodeModule* modulep = v3Global.rootp()->topModulep();
     size_t component = 0;
+    std::string inventoryRoot = path.empty() ? root : path[0];
     if (!path.empty()
         && (path[0] == AstNode::prettyName(modulep->name())
             || path[0] == AstNode::prettyName(v3Global.opt.topModule()))) {
@@ -559,12 +801,141 @@ void V3EmitC::prepareFaultApi() {
         // Named generate/block scopes are hierarchy components but not AstCells.
         // Leave the module unchanged for those components; the visitor sees cells
         // nested below such scopes on the following iteration.
-        if (matchp) modulep = matchp->modp();
+        if (matchp) {
+            modulep = matchp->modp();
+            inventoryRoot.clear();
+            for (size_t index = 0; index <= component; ++index) {
+                if (index) inventoryRoot += ".";
+                inventoryRoot += path[index];
+            }
+        }
     }
     if (!modulep) {
         v3error("--fault-root '" + root + "' could not be resolved for force instrumentation");
         return;
     }
+
+    const auto recordModule = [](AstNodeModule* rootModulep, const std::string& rootPath) {
+        class InventoryVisitor final : public VNVisitorConst {
+            const std::string& m_instancePath;
+
+            void record(const AstVar* varp) {
+                if (!varp->isSignal() && !varp->isIO() && !varp->isConst()) return;
+                std::vector<const AstUnpackArrayDType*> unpacked;
+                const AstNodeDType* const leafp = leafDTypep(varp->dtypep(), unpacked);
+                std::vector<std::pair<int, int>> dimensions;
+                for (const AstUnpackArrayDType* const unpackp : unpacked) {
+                    dimensions.emplace_back(unpackp->lo(), unpackp->hi());
+                }
+                const int width = std::max(1, leafp ? leafp->width() : varp->width());
+                const std::string objectKind
+                    = unpacked.empty()
+                          ? (width == 1 ? "scalar" : "packed_vector")
+                          : "unpacked_array_element";
+                SiteKind kind = SiteKind::UNKNOWN;
+                std::string uncertainReason = "no elaborated write context was found";
+                const std::string key = declarationKey(varp);
+                const auto semanticsIt = s_siteSemantics.find(key);
+                if (semanticsIt != s_siteSemantics.end()) {
+                    const uint8_t kinds = semanticsIt->second.m_writerKinds;
+                    if (!semanticsIt->second.m_sawUnknownWriter && kinds
+                        && !(kinds & (kinds - 1U))) {
+                        if (kinds == siteKindBit(SiteKind::SEQUENTIAL)) {
+                            kind = SiteKind::SEQUENTIAL;
+                        } else if (kinds == siteKindBit(SiteKind::LATCH)) {
+                            kind = SiteKind::LATCH;
+                        } else if (kinds == siteKindBit(SiteKind::COMBINATIONAL)) {
+                            kind = SiteKind::COMBINATIONAL;
+                        }
+                        uncertainReason.clear();
+                    } else {
+                        uncertainReason
+                            = "conflicting or semantically ambiguous elaborated write contexts";
+                    }
+                }
+
+                std::string earlyDisposition;
+                std::string earlyReason;
+                if (varp->isIO() || varp->declDirection().isAny() || varp->isConst()) {
+                    earlyDisposition = "port_or_constant";
+                    earlyReason = "ports and constants are outside the injectable internal state";
+                } else if (!isInjectableLeaf(leafp)) {
+                    earlyDisposition = "unsupported_datatype";
+                    earlyReason = "datatype is not a packed bit/logic scalar or vector";
+                }
+
+                const std::string basePath
+                    = m_instancePath + "." + AstNode::prettyName(varp->name());
+                const auto add = [&](const std::string& path) {
+                    s_accountingSites.push_back(
+                        {path, key, varp->fileline()->filename(), objectKind,
+                         earlyDisposition, earlyReason, varp->fileline()->lineno(),
+                         varp->fileline()->firstColumn(), width, dimensions, kind,
+                         uncertainReason});
+                };
+                if (unpacked.empty()) {
+                    add(basePath);
+                    return;
+                }
+                const std::function<void(size_t, std::string)> expand
+                    = [&](size_t dim, std::string path) {
+                          if (dim == unpacked.size()) {
+                              add(path);
+                              return;
+                          }
+                          const AstUnpackArrayDType* const unpackp = unpacked[dim];
+                          for (int offset = 0; offset < unpackp->elementsConst(); ++offset) {
+                              const int sourceIndex = unpackp->lo() + offset;
+                              expand(dim + 1, path + "[" + cvtToStr(sourceIndex) + "]");
+                          }
+                      };
+                expand(0, basePath);
+            }
+
+            void visit(AstVar* nodep) override { record(nodep); }
+            void visit(AstNodeModule*) override {}
+            void visit(AstNode* nodep) override { iterateChildrenConst(nodep); }
+
+        public:
+            InventoryVisitor(AstNodeModule* modulep, const std::string& instancePath)
+                : m_instancePath{instancePath} {
+                iterateChildrenConst(modulep);
+            }
+        };
+
+        const std::function<void(AstNodeModule*, const std::string&,
+                                 std::unordered_set<AstNodeModule*>)>
+            walk = [&](AstNodeModule* currentp, const std::string& instancePath,
+                       std::unordered_set<AstNodeModule*> ancestors) {
+                if (!currentp || !ancestors.insert(currentp).second) return;
+                InventoryVisitor inventory{currentp, instancePath};
+                ModuleContentsVisitor contents{currentp, false};
+                for (AstCell* const cellp : contents.m_cellps) {
+                    walk(cellp->modp(),
+                         instancePath + "." + AstNode::prettyName(cellp->name()), ancestors);
+                }
+            };
+        walk(rootModulep, rootPath, {});
+    };
+    recordModule(modulep, inventoryRoot);
+    const std::string accountingPrefix = root + ".";
+    s_accountingSites.erase(
+        std::remove_if(s_accountingSites.begin(), s_accountingSites.end(),
+                       [&](const AccountingSite& site) {
+                           return site.m_path != root
+                                  && !startsWith(site.m_path, accountingPrefix);
+                       }),
+        s_accountingSites.end());
+    std::stable_sort(s_accountingSites.begin(), s_accountingSites.end(),
+                     [](const AccountingSite& lhs, const AccountingSite& rhs) {
+                         return lhs.m_path < rhs.m_path;
+                     });
+    s_accountingSites.erase(
+        std::unique(s_accountingSites.begin(), s_accountingSites.end(),
+                    [](const AccountingSite& lhs, const AccountingSite& rhs) {
+                        return lhs.m_path == rhs.m_path;
+                    }),
+        s_accountingSites.end());
 
     std::vector<AstNodeModule*> pending{modulep};
     std::unordered_set<AstNodeModule*> visited;
