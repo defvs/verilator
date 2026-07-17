@@ -24,6 +24,7 @@
 
 class V3EmitC final {
 public:
+    static void prepareFaultApi() VL_MT_DISABLED;
     static void prepareProbeApi() VL_MT_DISABLED;
     static void emitcConstPool() VL_MT_DISABLED;
     static void emitcFaultApi() VL_MT_DISABLED;

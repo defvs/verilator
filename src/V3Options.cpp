@@ -984,6 +984,9 @@ void V3Options::notify() VL_MT_DISABLED {
     if (!faultApi() && !faultRoot().empty()) {
         cmdfl->v3error("--fault-root requires --fault-api");
     }
+    if (faultForce() && !faultApi()) {
+        cmdfl->v3error("--fault-force requires --fault-api");
+    }
     if (faultApi() && protectIds()) {
         cmdfl->v3error("--fault-api cannot be used with --protect-ids");
     }
@@ -1447,6 +1450,7 @@ void V3Options::parseOptsList(FileLine* fl, const string& optdir, int argc,
         // targets and adds no checks to the simulation hot path.
         if (flag) m_publicFlatRW = true;
     });
+    DECL_OPTION("-fault-force", OnOff, &m_faultForce);
     DECL_OPTION("-fault-root", Set, &m_faultRoot);
 
     DECL_OPTION("-F", CbVal, [this, fl, &optdir](const char* valp) VL_MT_DISABLED {

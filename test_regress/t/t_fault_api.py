@@ -13,6 +13,7 @@ test.scenarios('simulator')
 
 test.compile(make_top_shell=False, make_main=False,
              verilator_flags2=["--exe", "--fault-api", "--fault-root", "t.u_dut",
+                               "--fault-force",
                                test.pli_filename])
 
 test.execute()

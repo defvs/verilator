@@ -254,6 +254,7 @@ private:
     bool m_emitAccessors = false;   // main switch: --emit-accessors
     bool m_exe = false;             // main switch: --exe
     bool m_faultApi = false;        // main switch: --fault-api
+    bool m_faultForce = false;      // main switch: --fault-force
     bool m_flatten = false;         // main switch: --flatten
     bool m_fourstate = false;       // main switch: --fourstate
     bool m_hierarchical = false;    // main switch: --hierarchical
@@ -560,6 +561,7 @@ public:
     bool emitAccessors() const { return m_emitAccessors; }
     bool exe() const { return m_exe; }
     bool faultApi() const { return m_faultApi; }
+    bool faultForce() const { return m_faultForce; }
     const string& faultRoot() const { return m_faultRoot; }
     bool probeApi() const { return !m_probeConfig.empty(); }
     bool flatten() const { return m_flatten; }

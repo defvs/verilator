@@ -224,6 +224,7 @@ static void process() {
         V3WidthCommit::widthCommit(v3Global.rootp());
         v3Global.assertDTypesResolved(true);
         v3Global.widthMinUsage(VWidthMinUsage::MATCHES_WIDTH);
+        if (v3Global.opt.faultForce()) V3EmitC::prepareFaultApi();
         if (v3Global.opt.probeApi()) V3EmitC::prepareProbeApi();
 
         // End of elaboration
