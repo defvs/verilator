@@ -28,6 +28,7 @@ int main(int argc, char** argv) {
 
     const auto id = faults.lookup("t.u_dut.state_q");
     if (id == Vt_fault_apiFaultApi::invalidTarget) return 3;
+    if (std::string{faults.targets().at(id).site_kind} != "unknown") return 27;
     if (faults.lookup("t.tb_only") != Vt_fault_apiFaultApi::invalidTarget) return 4;
     if (faults.flip(id, 8)) return 5;
 
@@ -42,6 +43,7 @@ int main(int argc, char** argv) {
 
     const auto comb_id = faults.lookup("t.u_dut.internal_d");
     if (comb_id == Vt_fault_apiFaultApi::invalidTarget) return 13;
+    if (std::string{faults.targets().at(comb_id).site_kind} != "combinational") return 28;
     topp->source = 0;
     topp->eval();
     if (topp->observed != 0) return 14;
@@ -60,6 +62,7 @@ int main(int argc, char** argv) {
 
     const auto array_id = faults.lookup("t.u_dut.bank[1]");
     if (array_id == Vt_fault_apiFaultApi::invalidTarget) return 22;
+    if (std::string{faults.targets().at(array_id).site_kind} != "unknown") return 29;
     topp->bank_index = 1;
     if (!faults.force(array_id, 2, true)) return 23;
     topp->eval();

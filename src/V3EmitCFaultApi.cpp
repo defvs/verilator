@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -28,13 +29,58 @@ VL_DEFINE_DEBUG_FUNCTIONS;
 
 namespace {
 
+enum class SiteKind : uint8_t {
+    UNKNOWN = 0,
+    SEQUENTIAL = 1,
+    LATCH = 2,
+    COMBINATIONAL = 3,
+};
+
+struct SiteSemantics final {
+    uint8_t m_writerKinds = 0;
+    bool m_sawUnknownWriter = false;
+};
+
+std::unordered_map<std::string, SiteSemantics> s_siteSemantics;
+
+static std::string declarationKey(const AstVar* varp) {
+    const FileLine* const flp = varp->fileline();
+    return flp->filename() + ":" + cvtToStr(flp->lineno()) + ":"
+           + cvtToStr(flp->firstColumn()) + ":" + AstNode::prettyName(varp->origName());
+}
+
+static const char* siteKindName(SiteKind kind) {
+    switch (kind) {
+    case SiteKind::SEQUENTIAL: return "sequential";
+    case SiteKind::LATCH: return "latch";
+    case SiteKind::COMBINATIONAL: return "combinational";
+    case SiteKind::UNKNOWN: return "unknown";
+    }
+    return "unknown";
+}
+
+static uint8_t siteKindBit(SiteKind kind) {
+    return static_cast<uint8_t>(1U << static_cast<uint8_t>(kind));
+}
+
 struct FaultTarget final {
     const AstVar* m_varp;
     std::string m_name;
     std::string m_source;
     int m_width;
     std::vector<uint32_t> m_indices;
+    std::vector<std::pair<int, int>> m_dimensions;
+    SiteKind m_siteKind;
+    std::string m_uncertainReason;
 };
+
+static const char* targetSiteKindName(const FaultTarget& target) {
+    if (!target.m_indices.empty()
+        && (target.m_siteKind == SiteKind::SEQUENTIAL || target.m_siteKind == SiteKind::LATCH)) {
+        return "memory_element";
+    }
+    return siteKindName(target.m_siteKind);
+}
 
 static bool startsWith(const std::string& text, const std::string& prefix) {
     return text.size() >= prefix.size() && text.compare(0, prefix.size(), prefix) == 0;
@@ -79,12 +125,44 @@ class EmitCFaultApi final : public EmitCBaseVisitorConst {
 
     void visit(AstNode*) override {}
 
+    FaultTarget makeTarget(const AstVar* varp, const std::string& name,
+                           const std::vector<uint32_t>& indices,
+                           const std::vector<const AstUnpackArrayDType*>& unpacked) const {
+        std::vector<std::pair<int, int>> dimensions;
+        for (const AstUnpackArrayDType* const unpackp : unpacked) {
+            dimensions.emplace_back(unpackp->lo(), unpackp->hi());
+        }
+
+        SiteKind kind = SiteKind::UNKNOWN;
+        std::string uncertainReason = "no elaborated write context was found";
+        const auto semanticsIt = s_siteSemantics.find(declarationKey(varp));
+        if (semanticsIt != s_siteSemantics.end()) {
+            const uint8_t kinds = semanticsIt->second.m_writerKinds;
+            if (!semanticsIt->second.m_sawUnknownWriter && kinds
+                && !(kinds & (kinds - 1U))) {
+                if (kinds == siteKindBit(SiteKind::SEQUENTIAL)) {
+                    kind = SiteKind::SEQUENTIAL;
+                } else if (kinds == siteKindBit(SiteKind::LATCH)) {
+                    kind = SiteKind::LATCH;
+                } else if (kinds == siteKindBit(SiteKind::COMBINATIONAL)) {
+                    kind = SiteKind::COMBINATIONAL;
+                }
+                uncertainReason.clear();
+            } else {
+                uncertainReason
+                    = "conflicting or semantically ambiguous elaborated write contexts";
+            }
+        }
+        return {varp, name, varp->fileline()->filename(), varp->width(), indices, dimensions,
+                kind, uncertainReason};
+    }
+
     void collectUnpackedTargets(const AstVar* varp,
                                 const std::vector<const AstUnpackArrayDType*>& unpacked,
                                 size_t dim, std::vector<uint32_t>& indices,
                                 std::string name) {
         if (dim == unpacked.size()) {
-            m_targets.push_back({varp, name, varp->fileline()->filename(), varp->width(), indices});
+            m_targets.push_back(makeTarget(varp, name, indices, unpacked));
             return;
         }
 
@@ -110,7 +188,7 @@ class EmitCFaultApi final : public EmitCBaseVisitorConst {
             const std::string name = AstNode::prettyName(varp->name());
             UASSERT_OBJ(startsWith(name, prefix), varp, "Fault target escaped fault root");
             if (unpacked.empty()) {
-                m_targets.push_back({varp, name, varp->fileline()->filename(), varp->width(), {}});
+                m_targets.push_back(makeTarget(varp, name, {}, unpacked));
             } else {
                 std::vector<uint32_t> indices;
                 collectUnpackedTargets(varp, unpacked, 0, indices, name);
@@ -141,6 +219,8 @@ class EmitCFaultApi final : public EmitCBaseVisitorConst {
         puts("        TargetId id;\n");
         puts("        const char* name;\n");
         puts("        const char* kind;\n");
+        puts("        const char* site_kind;\n");
+        puts("        const char* object_kind;\n");
         puts("        std::uint32_t width;\n");
         puts("        const char* source;\n");
         puts("    };\n\n");
@@ -176,7 +256,15 @@ class EmitCFaultApi final : public EmitCBaseVisitorConst {
             const FaultTarget& target = m_targets[id];
             puts("        {" + cvtToStr(id) + "U, ");
             putsQuoted(target.m_name);
-            puts(", \"reg\", " + cvtToStr(target.m_width) + "U, ");
+            puts(", ");
+            putsQuoted(targetSiteKindName(target));
+            puts(", ");
+            putsQuoted(targetSiteKindName(target));
+            puts(", ");
+            putsQuoted(target.m_indices.empty()
+                           ? (target.m_width == 1 ? "scalar" : "packed_vector")
+                           : "unpacked_array_element");
+            puts(", " + cvtToStr(target.m_width) + "U, ");
             putsQuoted(target.m_source);
             puts("},\n");
         }
@@ -297,6 +385,8 @@ class EmitCFaultApi final : public EmitCBaseVisitorConst {
 
     void emitManifest() const {
         V3OutJsonFile of{v3Global.opt.makeDir() + "/fault_targets.json"};
+        of.put("schema_version", 2);
+        of.put("manifest_type", "vfi_fault_targets");
         of.put("top_module", AstNode::prettyName(v3Global.opt.topModule()));
         of.put("fault_root", v3Global.opt.faultRoot());
         of.begin("targets", '[');
@@ -305,9 +395,43 @@ class EmitCFaultApi final : public EmitCBaseVisitorConst {
             of.begin();
             of.put("id", static_cast<int>(id));
             of.put("name", target.m_name);
-            of.put("kind", "reg");
+            of.put("path", target.m_name);
+            of.put("kind", targetSiteKindName(target));
+            of.put("site_kind", targetSiteKindName(target));
+            of.put("object_kind", target.m_indices.empty()
+                                      ? (target.m_width == 1 ? "scalar" : "packed_vector")
+                                      : "unpacked_array_element");
             of.put("width", target.m_width);
             of.put("source", target.m_source);
+            of.put("declaration_line", target.m_varp->fileline()->lineno());
+            of.put("declaration_column", target.m_varp->fileline()->firstColumn());
+            of.begin("dimensions", '[');
+            for (const auto& dimension : target.m_dimensions) {
+                of.begin();
+                of.put("kind", "unpacked");
+                of.put("left", dimension.first);
+                of.put("right", dimension.second);
+                of.put("size",
+                       dimension.first >= dimension.second ? dimension.first - dimension.second + 1
+                                                           : dimension.second - dimension.first + 1);
+                of.end();
+            }
+            of.end();
+            std::vector<std::string> supportedModels;
+            if (target.m_siteKind == SiteKind::SEQUENTIAL
+                || target.m_siteKind == SiteKind::LATCH) {
+                supportedModels.push_back("seu");
+            }
+            if (target.m_siteKind != SiteKind::UNKNOWN) {
+                supportedModels.push_back("stuck_at_0");
+                supportedModels.push_back("stuck_at_1");
+            }
+            of.begin("supported_fault_models", '[');
+            for (const std::string& model : supportedModels) of.put(model);
+            of.end();
+            if (!target.m_uncertainReason.empty()) {
+                of.put("uncertain_reason", target.m_uncertainReason);
+            }
             of.end();
         }
         of.end();
@@ -330,6 +454,54 @@ public:
 void V3EmitC::prepareFaultApi() {
     UINFO(2, __FUNCTION__ << ":");
 
+    class SiteSemanticsVisitor final : public VNVisitorConst {
+        SiteKind m_context = SiteKind::UNKNOWN;
+
+        void iterateWithContext(AstNode* nodep, SiteKind context) {
+            const SiteKind previous = m_context;
+            m_context = context;
+            iterateChildrenConst(nodep);
+            m_context = previous;
+        }
+
+        void visit(AstAlways* nodep) override {
+            SiteKind context = SiteKind::UNKNOWN;
+            if (nodep->keyword() == VAlwaysKwd::ALWAYS_FF
+                || (nodep->sentreep() && nodep->sentreep()->hasEdge())) {
+                context = SiteKind::SEQUENTIAL;
+            } else if (nodep->keyword() == VAlwaysKwd::ALWAYS_LATCH) {
+                context = SiteKind::LATCH;
+            } else if (nodep->keyword() == VAlwaysKwd::ALWAYS_COMB
+                       || nodep->keyword() == VAlwaysKwd::CONT_ASSIGN) {
+                context = SiteKind::COMBINATIONAL;
+            }
+            iterateWithContext(nodep, context);
+        }
+        void visit(AstAssignW* nodep) override {
+            iterateWithContext(nodep, SiteKind::COMBINATIONAL);
+        }
+        void visit(AstAssignCont* nodep) override {
+            iterateWithContext(nodep, SiteKind::COMBINATIONAL);
+        }
+        void visit(AstVarRef* nodep) override {
+            if (nodep->access().isWriteOrRW()) {
+                SiteSemantics& semantics = s_siteSemantics[declarationKey(nodep->varp())];
+                if (m_context == SiteKind::UNKNOWN) {
+                    semantics.m_sawUnknownWriter = true;
+                } else {
+                    semantics.m_writerKinds |= siteKindBit(m_context);
+                }
+            }
+        }
+        void visit(AstNode* nodep) override { iterateChildrenConst(nodep); }
+
+    public:
+        explicit SiteSemanticsVisitor(AstNetlist* nodep) { iterateConst(nodep); }
+    };
+
+    s_siteSemantics.clear();
+    SiteSemanticsVisitor semantics{v3Global.rootp()};
+
     class ModuleContentsVisitor final : public VNVisitorConst {
         bool m_mark;
 
@@ -339,7 +511,8 @@ void V3EmitC::prepareFaultApi() {
                 return;
             }
             std::vector<const AstUnpackArrayDType*> unpacked;
-            if (isInjectableLeaf(leafDTypep(nodep->dtypep(), unpacked))) {
+            if (v3Global.opt.faultForce()
+                && isInjectableLeaf(leafDTypep(nodep->dtypep(), unpacked))) {
                 const_cast<AstVar*>(nodep)->setForceable();
             }
         }
@@ -395,7 +568,7 @@ void V3EmitC::prepareFaultApi() {
 
     std::vector<AstNodeModule*> pending{modulep};
     std::unordered_set<AstNodeModule*> visited;
-    v3Global.setHasForceableSignals();
+    if (v3Global.opt.faultForce()) v3Global.setHasForceableSignals();
     while (!pending.empty()) {
         AstNodeModule* const currentp = pending.back();
         pending.pop_back();
